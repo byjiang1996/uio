@@ -32,6 +32,7 @@
 struct uio_pci_generic_dev {
 	struct uio_info info;
 	struct pci_dev *pdev;
+	bool have_msi;
 };
 
 static inline struct uio_pci_generic_dev *
@@ -46,7 +47,7 @@ static irqreturn_t irqhandler(int irq, struct uio_info *info)
 {
 	struct uio_pci_generic_dev *gdev = to_uio_pci_generic_dev(info);
 
-	if (!pci_check_and_mask_intx(gdev->pdev))
+	if (!gdev->have_msi && !pci_check_and_mask_intx(gdev->pdev))
 		return IRQ_NONE;
 
 	/* UIO core will signal the user process. */
@@ -58,6 +59,7 @@ static int probe(struct pci_dev *pdev,
 {
 	struct uio_pci_generic_dev *gdev;
 	int err;
+	bool have_msi = false;
 
 	err = pci_enable_device(pdev);
 	if (err) {
@@ -66,9 +68,14 @@ static int probe(struct pci_dev *pdev,
 		return err;
 	}
 
-	if (pdev->irq && !pci_intx_mask_supported(pdev)) {
-		err = -ENODEV;
-		goto err_verify;
+	if (pdev->irq) 
+	{
+		if (!pci_enable_msi(pdev))
+			have_msi = true;
+		else if (!pci_intx_mask_supported(pdev)) {
+			err = -ENODEV;
+			goto err_verify;
+		}
 	}
 
 	gdev = kzalloc(sizeof(struct uio_pci_generic_dev), GFP_KERNEL);
@@ -81,8 +88,9 @@ static int probe(struct pci_dev *pdev,
 	gdev->info.version = DRIVER_VERSION;
 	gdev->pdev = pdev;
 	if (pdev->irq) {
+		gdev->have_msi = have_msi;
 		gdev->info.irq = pdev->irq;
-		gdev->info.irq_flags = IRQF_SHARED;
+		gdev->info.irq_flags = have_msi ? 0 : IRQF_SHARED;
 		gdev->info.handler = irqhandler;
 	} else {
 		dev_warn(&pdev->dev, "No IRQ assigned to device: "
@@ -98,6 +106,8 @@ static int probe(struct pci_dev *pdev,
 err_register:
 	kfree(gdev);
 err_alloc:
+	if (have_msi)
+		pci_disable_msi(pdev);
 err_verify:
 	pci_disable_device(pdev);
 	return err;
@@ -108,6 +118,8 @@ static void remove(struct pci_dev *pdev)
 	struct uio_pci_generic_dev *gdev = pci_get_drvdata(pdev);
 
 	uio_unregister_device(&gdev->info);
+	if (gdev->have_msi)
+		pci_disable_msi(pdev);
 	pci_disable_device(pdev);
 	kfree(gdev);
 }

@@ -1,4 +1,4 @@
-/* uio_pci_generic - generic UIO driver for PCI 2.3 devices
+/* byuio_pci_generic - generic UIO driver for PCI 2.3 devices
  *
  * Copyright (C) 2009 Red Hat, Inc.
  * Author: Michael S. Tsirkin <mst@redhat.com>
@@ -8,11 +8,11 @@
  * Since the driver does not declare any device ids, you must allocate
  * id and bind the device to the driver yourself.  For example:
  *
- * # echo "8086 10f5" > /sys/bus/pci/drivers/uio_pci_generic/new_id
+ * # echo "8086 10f5" > /sys/bus/pci/drivers/byuio_pci_generic/new_id
  * # echo -n 0000:00:19.0 > /sys/bus/pci/drivers/e1000e/unbind
- * # echo -n 0000:00:19.0 > /sys/bus/pci/drivers/uio_pci_generic/bind
+ * # echo -n 0000:00:19.0 > /sys/bus/pci/drivers/byuio_pci_generic/bind
  * # ls -l /sys/bus/pci/devices/0000:00:19.0/driver
- * .../0000:00:19.0/driver -> ../../../bus/pci/drivers/uio_pci_generic
+ * .../0000:00:19.0/driver -> ../../../bus/pci/drivers/byuio_pci_generic
  *
  * Driver won't bind to devices which do not support the Interrupt Disable Bit
  * in the command register. All devices compliant to PCI 2.3 (circa 2002) and
@@ -26,8 +26,8 @@
 #include <linux/uio_driver.h>
 
 #define DRIVER_VERSION "0.01.0"
-#define DRIVER_AUTHOR "Michael S. Tsirkin <mst@redhat.com>"
-#define DRIVER_DESC "Generic UIO driver for PCI 2.3 devices"
+#define DRIVER_AUTHOR "Binyao Jiang <binyaoj2@illinois.edu>"
+#define DRIVER_DESC "Revised generic UIO driver for PCI 2.3 devices"
 
 struct uio_pci_generic_dev
 {
@@ -104,7 +104,7 @@ static int probe(struct pci_dev *pdev,
 							 "no support for interrupts?\n");
 	}
 
-	err = uio_register_device(&pdev->dev, &gdev->info);
+	err = byuio_register_device(THIS_MODULE, &pdev->dev, &gdev->info);
 	if (err)
 		goto err_register;
 	pci_set_drvdata(pdev, gdev);
@@ -124,7 +124,7 @@ static void remove(struct pci_dev *pdev)
 {
 	struct uio_pci_generic_dev *gdev = pci_get_drvdata(pdev);
 
-	uio_unregister_device(&gdev->info);
+	byuio_unregister_device(&gdev->info);
 	if (gdev->have_msi)
 		pci_disable_msi(pdev);
 	pci_disable_device(pdev);

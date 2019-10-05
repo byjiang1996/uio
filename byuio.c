@@ -443,10 +443,10 @@ static void uio_free_minor(struct uio_device *idev)
 }
 
 /**
- * uio_event_notify - trigger an interrupt event
+ * byuio_event_notify - trigger an interrupt event
  * @info: UIO device capabilities
  */
-void uio_event_notify(struct uio_info *info)
+void byuio_event_notify(struct uio_info *info)
 {
 	struct uio_device *idev = info->uio_dev;
 
@@ -454,7 +454,7 @@ void uio_event_notify(struct uio_info *info)
 	wake_up_interruptible(&idev->wait);
 	kill_fasync(&idev->async_queue, SIGIO, POLL_IN);
 }
-EXPORT_SYMBOL_GPL(uio_event_notify);
+EXPORT_SYMBOL_GPL(byuio_event_notify);
 
 /**
  * uio_interrupt - hardware interrupt handler
@@ -468,7 +468,7 @@ static irqreturn_t uio_interrupt(int irq, void *dev_id)
 
 	ret = idev->info->handler(irq, idev->info);
 	if (ret == IRQ_HANDLED)
-		uio_event_notify(idev->info);
+		byuio_event_notify(idev->info);
 
 	return ret;
 }
@@ -947,14 +947,14 @@ static void uio_device_release(struct device *dev)
 }
 
 /**
- * uio_register_device - register a new userspace IO device
+ * byuio_register_device - register a new userspace IO device
  * @owner:	module that creates the new device
  * @parent:	parent device
  * @info:	UIO device capabilities
  *
  * returns zero on success or a negative error code.
  */
-int __uio_register_device(struct module *owner,
+int byuio_register_device(struct module *owner,
 						  struct device *parent,
 						  struct uio_info *info)
 {
@@ -1034,14 +1034,14 @@ err_device_create:
 	uio_free_minor(idev);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(__uio_register_device);
+EXPORT_SYMBOL_GPL(byuio_register_device);
 
 /**
- * uio_unregister_device - unregister a industrial IO device
+ * byuio_unregister_device - unregister a industrial IO device
  * @info:	UIO device capabilities
  *
  */
-void uio_unregister_device(struct uio_info *info)
+void byuio_unregister_device(struct uio_info *info)
 {
 	struct uio_device *idev;
 
@@ -1065,7 +1065,7 @@ void uio_unregister_device(struct uio_info *info)
 
 	return;
 }
-EXPORT_SYMBOL_GPL(uio_unregister_device);
+EXPORT_SYMBOL_GPL(byuio_unregister_device);
 
 static int __init uio_init(void)
 {

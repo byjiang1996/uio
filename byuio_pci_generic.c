@@ -28,12 +28,15 @@
 #define DRIVER_VERSION "0.01.0"
 #define DRIVER_AUTHOR "Binyao Jiang <binyaoj2@illinois.edu>"
 #define DRIVER_DESC "Revised generic UIO driver for PCI 2.3 devices"
+#define IRQ_VECTOR_MAX_NUM (32)
 
+extern int byuio_register_device(struct module *owner, struct device *parent, struct uio_info *info);
+extern void byuio_unregister_device(struct uio_info *info);
+extern void byuio_event_notify(struct uio_info *info);
 struct uio_pci_generic_dev
 {
 	struct uio_info info;
 	struct pci_dev *pdev;
-	bool have_msi;
 };
 
 static inline struct uio_pci_generic_dev *
@@ -44,13 +47,11 @@ to_uio_pci_generic_dev(struct uio_info *info)
 
 /* Interrupt handler. Read/modify/write the command register to disable
  * the interrupt. */
-static irqreturn_t irqhandler(int irq, struct uio_info *info)
+static irqreturn_t irqhandler(int irq, void *dev_id)
 {
-	struct uio_pci_generic_dev *gdev = to_uio_pci_generic_dev(info);
+	struct uio_info *info = (struct uio_info *)dev_id;
 
-	if (!gdev->have_msi && !pci_check_and_mask_intx(gdev->pdev))
-		return IRQ_NONE;
-
+	byuio_event_notify(info);
 	/* UIO core will signal the user process. */
 	return IRQ_HANDLED;
 }
@@ -60,7 +61,6 @@ static int probe(struct pci_dev *pdev,
 {
 	struct uio_pci_generic_dev *gdev;
 	int err;
-	bool have_msi = false;
 
 	err = pci_enable_device(pdev);
 	if (err)
@@ -70,17 +70,6 @@ static int probe(struct pci_dev *pdev,
 		return err;
 	}
 
-	if (pdev->irq)
-	{
-		if (!pci_enable_msi(pdev)))
-			have_msi = true;
-		else if (!pci_intx_mask_supported(pdev))
-		{
-			err = -ENODEV;
-			goto err_verify;
-		}
-	}
-
 	gdev = kzalloc(sizeof(struct uio_pci_generic_dev), GFP_KERNEL);
 	if (!gdev)
 	{
@@ -88,15 +77,36 @@ static int probe(struct pci_dev *pdev,
 		goto err_alloc;
 	}
 
-	gdev->info.name = "uio_pci_generic";
+	gdev->info.mem[0].addr = pci_resource_start(pdev, 0);
+	if (!gdev->info.mem[0].addr)
+		goto out_release;
+	gdev->info.mem[0].internal_addr = pci_ioremap_bar(pdev, 0);
+	if (!gdev->info.mem[0].internal_addr)
+		goto out_release;
+
+	gdev->info.mem[0].size = pci_resource_len(pdev, 0);
+	gdev->info.mem[0].memtype = UIO_MEM_PHYS;
+
+	gdev->info.name = "byuio_pci_generic";
 	gdev->info.version = DRIVER_VERSION;
 	gdev->pdev = pdev;
 	if (pdev->irq)
 	{
-		gdev->have_msi = have_msi;
-		gdev->info.irq = pdev->irq;
-		gdev->info.irq_flags = have_msi ? 0 : IRQF_SHARED;
-		gdev->info.handler = irqhandler;
+		gdev->info.irq = UIO_IRQ_CUSTOM;
+		// only support interrupt for completion queue id = 1
+		if ((err = pci_alloc_irq_vectors(pdev, 1, IRQ_VECTOR_MAX_NUM, PCI_IRQ_ALL_TYPES)) < 0)
+		{
+			dev_err(&pdev->dev, "%s: pci_alloc_irq_vectors failed: %d\n",
+					__func__, err);
+			goto err_alloc_irq;
+		}
+
+		if ((err = pci_request_irq(pdev, 1, irqhandler, NULL, &gdev->info, "nvme_intr")) < 0)
+		{
+			dev_err(&pdev->dev, "%s: pci_alloc_irq_vectors_affinity failed: %d\n",
+					__func__, err);
+			goto err_req_irq;
+		}
 	}
 	else
 	{
@@ -111,11 +121,14 @@ static int probe(struct pci_dev *pdev,
 
 	return 0;
 err_register:
+	pci_free_irq(pdev, 1, &gdev->info);
+err_req_irq:
+	pci_free_irq_vectors(pdev);
+err_alloc_irq:
+	iounmap(gdev->info.mem[0].internal_addr);
+out_release:
 	kfree(gdev);
 err_alloc:
-	if (have_msi)
-		pci_disable_msi(pdev);
-err_verify:
 	pci_disable_device(pdev);
 	return err;
 }
@@ -124,15 +137,16 @@ static void remove(struct pci_dev *pdev)
 {
 	struct uio_pci_generic_dev *gdev = pci_get_drvdata(pdev);
 
+	pci_free_irq(pdev, 1, &gdev->info);
+	pci_free_irq_vectors(pdev);
+	iounmap(gdev->info.mem[0].internal_addr);
 	byuio_unregister_device(&gdev->info);
-	if (gdev->have_msi)
-		pci_disable_msi(pdev);
 	pci_disable_device(pdev);
 	kfree(gdev);
 }
 
 static struct pci_driver uio_pci_driver = {
-	.name = "uio_pci_generic",
+	.name = "byuio_pci_generic",
 	.id_table = NULL, /* only dynamic id's */
 	.probe = probe,
 	.remove = remove,

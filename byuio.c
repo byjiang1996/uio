@@ -25,8 +25,11 @@
 #include <linux/kobject.h>
 #include <linux/cdev.h>
 #include <linux/uio_driver.h>
+#include <asm/io.h>
 
 #define UIO_MAX_DEVICES (1U << MINORBITS)
+#define REG_BATCH_INTR_BASE_ADDR (0x100)
+#define REG_DOORBELL_BEGIN (0x1000)
 
 static int uio_major;
 static struct cdev *uio_cdev;
@@ -594,24 +597,36 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 	struct uio_device *idev = listener->dev;
 	DECLARE_WAITQUEUE(wait, current);
 	ssize_t retval = 0;
+	void __iomem *intr_addr;
+	u32 ubuf;
 	s32 event_count;
+	bool first_time = true;
 
 	mutex_lock(&idev->info_lock);
-	if (!idev->info || !idev->info->irq)
+	if (!idev->info || !idev->info->irq || !idev->info->mem[0].internal_addr ||
+		REG_BATCH_INTR_BASE_ADDR + sizeof(u32) * count >= min_t(unsigned long, idev->info->mem[0].size, REG_DOORBELL_BEGIN))
 		retval = -EIO;
 	mutex_unlock(&idev->info_lock);
+
+	if (copy_from_user(&ubuf, buf, sizeof(u32)))
+		retval = -ENOSPC;
 
 	if (retval)
 		return retval;
 
-	if (count != sizeof(s32))
-		return -EINVAL;
-
 	add_wait_queue(&idev->wait, &wait);
+	listener->event_count = atomic_read(&idev->event);
+	intr_addr = idev->info->mem[0].internal_addr + REG_BATCH_INTR_BASE_ADDR + sizeof(u32) * count;
+	count = sizeof(s32);
 
 	do
 	{
 		set_current_state(TASK_INTERRUPTIBLE);
+		if (first_time)
+		{
+			iowrite32(ubuf, intr_addr);
+			first_time = false;
+		}
 
 		event_count = atomic_read(&idev->event);
 		if (event_count != listener->event_count)
@@ -1078,6 +1093,6 @@ static void __exit uio_exit(void)
 	idr_destroy(&uio_idr);
 }
 
-module_init(uio_init)
-	module_exit(uio_exit)
-		MODULE_LICENSE("GPL v2");
+module_init(uio_init);
+module_exit(uio_exit);
+MODULE_LICENSE("GPL v2");
